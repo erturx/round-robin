@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Round Robin — планировщик</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 32px 16px; background: #f6f2e9; color: #232d45; font: 15px Arial, sans-serif; }
+    main { max-width: 900px; margin: auto; }
+    header { display: flex; align-items: center; gap: 14px; margin-bottom: 24px; }
+    .badge { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 16px; background: #5264c7; color: white; font-weight: bold; }
+    h1, h2, p { margin-top: 0; }
+    h1 { margin-bottom: 4px; font-size: 25px; }
+    header p, .hint { margin-bottom: 0; color: #71798b; font-size: 13px; }
+    .card { margin-bottom: 16px; padding: 22px; border: 1px solid #e7e0d4; border-radius: 16px; background: #fffefa; box-shadow: 0 5px 18px #332b1708; }
+    h2 { margin-bottom: 16px; font-size: 18px; }
+    label { color: #555f77; font-size: 13px; font-weight: bold; }
+    input { width: 100%; padding: 10px; border: 1px solid #ddd9d0; border-radius: 8px; background: white; color: #232d45; font-size: 14px; }
+    input:focus { border-color: #5264c7; outline: 2px solid #5264c722; }
+    #quantum { width: 110px; margin: 7px 0 20px; }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th { color: #81889a; font-size: 11px; font-weight: normal; }
+    th, td { padding: 8px 6px; border-bottom: 1px solid #efede7; }
+    td:first-child { width: 54px; color: #5264c7; font-weight: bold; }
+    .process-input { min-width: 70px; }
+    .remove { border: 0; background: none; color: #a2a5ad; cursor: pointer; font-size: 20px; }
+    .buttons { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+    button.action { padding: 11px 15px; border: 0; border-radius: 9px; background: #5264c7; color: white; cursor: pointer; font-size: 13px; font-weight: bold; }
+    button.action:hover { background: #3e50b0; }
+    button.secondary { background: #f0edff; color: #4656b0; }
+    button.secondary:hover { background: #e3dfff; }
+    .rule { margin: -4px 0 18px; padding: 12px 14px; border-radius: 10px; background: #fff3df; color: #765d35; font-size: 13px; line-height: 1.5; }
+    #gantt { display: flex; min-height: 48px; overflow: hidden; border: 1px solid #e6e3dc; border-radius: 9px; }
+    .block { display: grid; min-width: 34px; place-items: center; border-right: 2px solid #fffefa; color: white; font-size: 12px; font-weight: bold; }
+    .block.idle { background: #aab0b9; }
+    #ticks { display: flex; justify-content: space-between; margin-top: 7px; color: #808797; font-size: 11px; }
+    .stats { display: flex; flex-wrap: wrap; gap: 12px; margin: 18px 0; }
+    .stat { flex: 1; min-width: 150px; padding: 14px; border-radius: 10px; background: #f0edff; color: #5264c7; }
+    .stat span { display: block; color: #646d84; font-size: 12px; }
+    .stat strong { display: block; margin-top: 6px; font-size: 22px; }
+    .error { margin: 12px 0 0; color: #b44747; font-size: 13px; }
+    [hidden] { display: none !important; }
+    footer { padding: 8px; color: #858b98; font-size: 12px; text-align: center; }
+    @media (max-width: 520px) { body { padding: 22px 11px; } .card { padding: 16px 12px; } th, td { padding: 7px 4px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="badge">RR</div>
+      <div><h1>Round Robin</h1><p>Простой планировщик процессов</p></div>
+    </header>
+
+    <section class="card">
+      <h2>Входные данные</h2>
+      <form id="form">
+        <label for="quantum">Квант времени</label><br>
+        <input id="quantum" type="number" min="1" value="2" required>
+        <table>
+          <thead><tr><th>Процесс</th><th>Arrival</th><th>Burst</th><th></th></tr></thead>
+          <tbody id="processes"></tbody>
+        </table>
+        <div class="buttons">
+          <button class="action secondary" id="add" type="button">＋ Добавить процесс</button>
+          <button class="action" type="submit">Рассчитать →</button>
+        </div>
+        <p class="error" id="error" hidden></p>
+      </form>
+    </section>
+
+    <section class="card" id="output" hidden>
+      <h2>Расписание CPU</h2>
+      <p class="rule">Если процесс приходит точно на границе кванта, он встаёт в очередь перед вытесненным процессом.</p>
+      <div id="gantt"></div><div id="ticks"></div>
+      <div class="stats">
+        <div class="stat"><span>Среднее ожидание (WT)</span><strong id="avg-wt"></strong></div>
+        <div class="stat"><span>Средний turnaround (TAT)</span><strong id="avg-tat"></strong></div>
+      </div>
+      <table>
+        <thead><tr><th>Процесс</th><th>CT</th><th>WT</th><th>TAT</th></tr></thead>
+        <tbody id="results"></tbody>
+      </table>
+    </section>
+    <footer>WT = TAT − Burst · TAT = CT − Arrival</footer>
+  </main>
+
+  <script>
+    const body = document.getElementById('processes');
+    const error = document.getElementById('error');
+    const colors = ['#5264c7', '#ef9c63', '#5a9c87', '#d36f84', '#806bb2'];
+
+    function addProcess(arrival = 0, burst = 1) {
+      const row = body.insertRow();
+      row.innerHTML = `<td></td><td><input class="process-input arrival" type="number" min="0" value="${arrival}" required></td><td><input class="process-input burst" type="number" min="1" value="${burst}" required></td><td><button class="remove" type="button" aria-label="Удалить процесс">×</button></td>`;
+      row.querySelector('.remove').onclick = () => { if (body.rows.length > 1) { row.remove(); labelRows(); } };
+      labelRows();
+    }
+
+    function labelRows() {
+      [...body.rows].forEach((row, i) => row.cells[0].textContent = `P${i + 1}`);
+    }
+
+    addProcess(0, 5); addProcess(1, 3); addProcess(2, 1); addProcess(3, 2);
+    document.getElementById('add').onclick = () => addProcess();
+
+    document.getElementById('form').onsubmit = async event => {
+      event.preventDefault();
+      error.hidden = true;
+      const processes = [...body.rows].map(row => ({
+        arrival: row.querySelector('.arrival').value,
+        burst: row.querySelector('.burst').value
+      }));
+      try {
+        const response = await fetch('/api/schedule', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ quantum: document.getElementById('quantum').value, processes })
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error);
+        showResult(result);
+      } catch (e) {
+        error.textContent = e.message || 'Не удалось связаться с сервером.';
+        error.hidden = false;
+      }
+    };
+
+    function showResult(data) {
+      document.getElementById('output').hidden = false;
+      const gantt = document.getElementById('gantt');
+      gantt.replaceChildren();
+      data.gantt.forEach((part, i) => {
+        const block = document.createElement('div');
+        block.className = `block${part.process === 'Idle' ? ' idle' : ''}`;
+        block.style.flexGrow = part.end - part.start;
+        if (part.process !== 'Idle') block.style.background = colors[(Number(part.process.slice(1)) - 1) % colors.length];
+        block.textContent = part.process;
+        block.title = `${part.process}: ${part.start}–${part.end}`;
+        gantt.appendChild(block);
+      });
+      const finish = data.gantt.at(-1).end;
+      document.getElementById('ticks').innerHTML = `<span>0</span><span>${finish}</span>`;
+      document.getElementById('avg-wt').textContent = data.averageWaiting.toFixed(2);
+      document.getElementById('avg-tat').textContent = data.averageTurnaround.toFixed(2);
+      document.getElementById('results').innerHTML = data.processes.map(p => `<tr><td>${p.process}</td><td>${p.completion}</td><td>${p.waiting}</td><td>${p.turnaround}</td></tr>`).join('');
+    }
+  </script>
+</body>
+</html>
+
